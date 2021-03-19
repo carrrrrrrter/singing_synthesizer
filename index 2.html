@@ -1,0 +1,1568 @@
+<script src=lib13.js></script>
+<script src=matrix.js></script>
+
+
+<body bgcolor=black text=white link=white alink=white vlink=white>
+<center>
+<canvas id='canvas1' width=600 height=600></canvas>
+
+
+
+
+<!! ----------------------------- SLIDERS ----------------------------->
+<br>
+Volume <input type=range min=-1 max=1 value=-1.0 step=0.001 class=slider id="volume">
+
+
+<!! ------------------------------------------------------------------->
+
+
+</center>
+
+</body>
+
+
+<!!-------- VERTEX SHADER -------->
+
+<script id='my_vertex_shader' type='x-shader/x-vertex'>
+   attribute vec3 aPos, aNor;
+   uniform   mat4 uMatrix, uIMatrix, uCamera;
+   varying   vec3 vPos, vNor, vAPos, vANor;
+
+   // TO ANIMATE EACH VERTEX, TRANSFORM BY UNIFORM VARIABLE uMatrix.
+
+   void main() {
+      vec4 pos = uMatrix * vec4(aPos, 1.);
+      vec4 nor = vec4(aNor, 0.) * uIMatrix;
+      vPos = pos.xyz;
+      vNor = nor.xyz;
+      vAPos = aPos;
+      vANor = aNor;
+      gl_Position = (uCamera * pos) * vec4(1.,1.,0.1,1.);
+   }
+</script>
+
+
+<!!-------- FRAGMENT SHADER -------->
+
+<script id='my_fragment_shader' type='x-shader/x-fragment'>
+
+ const int nl = 2;
+
+ uniform vec3 uLDir[nl];
+ uniform vec3 uLCol[nl];
+
+ uniform mat4 uPhong[2];
+
+ varying vec3 vPos, vNor, vAPos, vANor;
+
+ void main() {
+
+    // NORMALIZE SURFACE NORMAL VECTOR
+
+    vec3 N = normalize(vNor);
+
+    // DO PHONG SHADING
+
+    vec3 ambient = uPhong[0][0].xyz;
+    vec3 diffuse = uPhong[0][1].xyz;
+    vec3 specular = uPhong[0][2].xyz;
+    float p = uPhong[0][2].w;
+
+    vec3 color = ambient;
+    for (int i = 0 ; i < nl ; i++) {
+       color += diffuse * uLCol[i] * max(0., dot(N, uLDir[i]));
+       vec3 R = 2. * N * dot(N, uLDir[i]) - uLDir[i];
+       color += specular * uLCol[i] * pow(max(0., dot(N, R)), p);
+    }
+
+    // ADD PROCEDURAL TEXTURE
+
+    //color *= .5 + .5 * noise(vAPos * 3.);
+
+    gl_FragColor = vec4(sqrt(color), 1.0);
+ }</script>
+
+
+<!!-------- CREATE A PROPERLY DESCRIPTIVE TITLE BELOW -------->
+
+<script id='my_title' type='text/html'>
+Symon The Singing Synthesizer
+</script>
+
+
+<!!-------- HERE IS WHERE YOU CAN PROVIDE A LONGER TEXT DESCRIPTION -------->
+
+<script id='my_instructions' type='text/html'><font color=#b0b0b0>
+   <img src="keyboard.png" alt="Musical Typing" width="600" height="200">
+
+   <br> <br>
+   Meet Symon, the singing synthesizer! Play your computer keyboard like a piano, 
+   using the image above as reference. Symon only knows the black and white keys,
+   so stick to using those as shown in the image.
+   <br>
+   <br>
+   When you play each note, try holding down the key to see the unique animation
+   associated with each note. Some are subtle, and some are a bit odd!
+
+   <br>
+   <br>
+   Also, make sure to adjust the volume so you can hear Symon sing!
+</script>
+
+
+<!!-------- YOU PROBABLY DON'T WANT TO CHANGE ANYTHING BELOW FOR NOW -------->
+   
+<script>
+
+// CREATE THE HTML DOCUMENT
+
+let vs = my_vertex_shader.innerHTML,
+    fs = my_fragment_shader.innerHTML;
+    fs = fs.substring(1, fs.length);
+
+document.body.innerHTML = [''
+   ,'<center><font size=6 color=#b0b0b0>' + my_title.innerHTML + '</center>'
+   ,'<TABLE cellspacing=0 cellpadding=0><TR>'
+   ,'<td width=50></td><td><font color=red size=5><div id=errorMessage>&nbsp;</div></font></td>'
+   ,'</TR><TR>'
+   ,'<table cellspacing=10>'
+   ,'<tr>'
+   ,'<td valign=top><font size=2 color=red><div id=errorMarker>&nbsp;</div></font></td>'
+   ,'<td valign=top>'
+   ,'<textArea id=textArea spellcheck=false '
+   ,'style="font:16px courier;outline-width:0;border-style:none;resize:none;overflow:scroll;"'
+   ,'></textArea>'
+   ,'</td><td valign=top>' + document.body.innerHTML + '</td>'
+   ,'<td valign=top><font size=5>' + my_instructions.innerHTML + '</td>'
+   ,'</tr></table>'
+   ,'</TR></TABLE>'
+   ].join('');
+
+// SET UP THE EDITABLE TEXT AREA ON THE LEFT SIDE.
+
+let text = fs.split('\n'), cols = 0;
+for (let i = 0 ; i < text.length ; i++)
+   cols = Math.max(cols, text[i].length);
+
+textArea.rows = text.length;
+textArea.cols = cols - 10;
+textArea.value = fs;
+textArea.style.backgroundColor = '#202020';
+textArea.style.color = 'white';
+
+// REPARSE THE SHADER PROGRAM AFTER EVERY KEYSTROKE.
+
+textArea.onkeyup = function() { canvas1.setShaders(vs, this.value); }
+
+// SET THE CURRENT TIME IN SECONDS BEFORE RENDERING EACH FRAME.
+
+let startTime = Date.now();
+
+
+////////////////// CREATE MESH SHAPES //////////////////
+
+const VERTEX_SIZE = 6;       // x,y,z, nx,ny,nz
+
+// CREATE A PARAMETRIC MESH
+
+let createMesh = (nu, nv, uvToShape, info) => {
+   let tmp = [];
+   for (let j = 0 ; j < nv ; j++)
+   for (let i = 0 ; i <= nu ; i++) {
+      tmp = tmp.concat(uvToShape(i/nu,  j   /nv, info));
+      tmp = tmp.concat(uvToShape(i/nu, (j+1)/nv, info));
+   }
+   return new Float32Array(tmp);
+}
+
+
+// GLUE TOGETHER TWO MESHES
+
+let glueTwoMeshes = (a, b) => {
+   let vs = VERTEX_SIZE;
+
+   let c = new Float32Array(a.length + 2 * vs + b.length);
+   let nc = 0;
+
+   let append = (a, i, n) => {
+      for (let j = 0 ; j < n ; j++)
+         c[nc++] = a[i + j];
+   }
+
+   append(a, 0, a.length);
+   append(a, a.length - vs, vs);
+   append(b, 0, vs);
+   append(b, 0, b.length);
+
+   return c;
+}
+
+
+// GLUE TOGETHER AN ARRAY OF MESHES
+
+let glueMeshes = meshes => {
+   let mesh = meshes[0];
+   for (let i = 1 ; i < meshes.length ; i++)
+      mesh = glueTwoMeshes(mesh, meshes[i]);
+   return mesh;
+}
+
+
+// SQUARE MESH
+
+let uvToSquare = (u,v,info) => {
+   let k = 2, z = 0, s = 1;
+
+   if (info) {
+      k = info[0];
+      s = info[1];
+      z = s;
+   }
+
+   let i = (k + 1) % 3;
+   let j = (k + 2) % 3;
+
+   let vertex = [];
+
+   vertex[i] = 2*u-1;
+   vertex[j] = 2*v-1;
+   vertex[k] = z;
+
+   vertex[3 + i] = 0;
+   vertex[3 + j] = 0;
+   vertex[3 + k] = s;
+
+   return vertex;
+}
+let squareMesh = createMesh(1, 1, uvToSquare);
+
+
+// CUBE MESH: GLUE TOGETHER SIX SQUARE MESHES
+
+let cubeMesh = glueMeshes([
+   createMesh(1,1, uvToSquare, [0,-1]),
+   createMesh(1,1, uvToSquare, [0, 1]),
+   createMesh(1,1, uvToSquare, [1,-1]),
+   createMesh(1,1, uvToSquare, [1, 1]),
+   createMesh(1,1, uvToSquare, [2,-1]),
+   createMesh(1,1, uvToSquare, [2, 1]),
+]);
+
+
+// TUBE MESH
+
+let uvToTube = (u,v) => {
+   let theta = 2 * Math.PI * u;
+   let c = Math.cos(theta);
+   let s = Math.sin(theta);
+   return [ c,s,2*v-1, c,s,0 ];
+}
+let tubeMesh = createMesh(32, 1, uvToTube);
+
+
+// DISK MESH
+
+let uvToDisk = (u,v,info) => {
+   let z = 0, nz = 1;
+
+   if (info) {
+      z = info[0];
+      nz = info[1];
+   }
+
+   let theta = 2 * Math.PI * u;
+   let c = Math.cos(theta);
+   let s = Math.sin(theta);
+   return [ v*c, v*s, z,   0,0,nz ];
+}
+let diskMesh = createMesh(32, 1, uvToDisk);
+
+
+// CYLINDER MESH: GLUE TOGETHER A TUBE AND TWO DISKS
+
+let createCylinderMesh = nu => {
+   return glueMeshes([
+      createMesh(nu, 1, uvToDisk, [-1,-1]),
+      createMesh(nu, 1, uvToTube),
+      createMesh(nu, 1, uvToDisk, [1,1])
+   ]);
+}
+let cylinderMesh = createCylinderMesh(8);
+
+
+// SPHERE MESH
+
+let uvToSphere = (u,v) => {
+   let phi = Math.PI * (v - .5);
+   let theta = 2 * Math.PI * u;
+   let x = Math.cos(phi) * Math.cos(theta);
+   let y = Math.cos(phi) * Math.sin(theta);
+   let z = Math.sin(phi);
+   return [ x,y,z,  x,y,z ];
+}
+let sphereMesh = createMesh(32, 16, uvToSphere);
+
+
+// LATHE MESH
+
+let epsilon = 0.001;
+
+let uvToLathe = (u,v,info) => {
+   let theta = 2 * Math.PI * u;
+   let z0 = evalCatmullRomSpline(v-epsilon/2, info[0]);
+   let z1 = evalCatmullRomSpline(v+epsilon/2, info[0]);
+   let r0 = evalCatmullRomSpline(v-epsilon/2, info[1]);
+   let r1 = evalCatmullRomSpline(v+epsilon/2, info[1]);
+   let x = r0 * Math.cos(theta);
+   let y = r0 * Math.sin(theta);
+   let N = normalize([x,y,(r0-r1)/(z1-z0)]);
+   return [x,y,z0,  N[0],N[1],N[2] ];
+}
+
+////////////////// RESPOND TO MOUSE EVENTS.
+
+let isDown = false, mouseX = 0, mouseY = 0;
+
+canvas1.onPress = (x, y) => {
+   isDown = true;
+}
+
+canvas1.onDrag = (x, y) => {
+   mouseX = x;
+   mouseY = y;
+}
+
+canvas1.onRelease = (x, y) => {
+   isDown = false;
+}
+
+canvas1.onMove = (x, y) => {
+   mouseX = x;
+   mouseY = y;
+}
+
+////////////// WEB AUDIO API SYNTHESIS AND KEY-MAPPING ////////////
+
+let audioContext;
+try {
+   audioContext = new (window.AudioContext || window.webkitAudioContext)();
+} catch (error) {
+   window.alert("Browser doesn't support the Web Audio API!");
+}
+
+//create oscillator/gain nodes
+const oscillator = audioContext.createOscillator();
+const gainNode = audioContext.createGain();
+
+oscillator.type = 'sawtooth';
+
+//Connect osillator to gain node, then gain node to output
+gainNode.gain.value = -1.0;
+let standardGain = -1.0
+oscillator.connect(gainNode);
+gainNode.connect(audioContext.destination);
+oscillator.connect(audioContext.destination);
+
+oscillator.start();
+
+const volumeControl = document.querySelector('#volume');
+volumeControl.addEventListener('input', function() {
+    standardGain = this.value;
+}, false);
+
+
+////////////////// MAP KEYS TO KEYBOARD //////////////
+
+let drawC1 = false;
+let drawCsharp1 = false;
+let drawD1 = false;
+let drawDsharp1 = false;
+let drawE1 = false;
+let drawF1 = false;
+let drawFsharp1 = false;
+let drawG1 = false;
+let drawGsharp1 = false;
+let drawA1 = false;
+let drawAsharp1 = false;
+let drawB1 = false;
+let drawC2 = false;
+let drawCsharp2 = false;
+let drawD2 = false;
+let drawDsharp2 = false;
+let drawE2 = false;
+let drawF2 = false;
+
+
+let keyDown = false;
+
+
+
+canvas1.onKeyPress = key => {
+   keyDown = true;
+   if (key === 65){
+      drawC1 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 261.6256;
+         oscillator.connect(audioContext.destination);
+      });
+      
+      console.log('pressed C note', key); // A
+   }
+   else if (key === 87){
+      drawCsharp1 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 277.1826;
+         oscillator.connect(audioContext.destination);
+         
+      });
+      console.log('pressed C# note', key); // W
+   }
+   else if (key === 83){
+      drawD1 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 293.6648;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed D note', key); // s
+   }
+   else if (key === 69){
+      drawDsharp1 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 311.1270;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed D# note', key); // E
+   }
+   else if (key === 68){
+      drawE1 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 329.6276;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed E note', key); // D
+   }
+   else if (key === 70){
+      drawF1 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 349.2282;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed F note', key); // F
+   }
+   else if (key === 84){
+      drawFsharp1 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 369.9944;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed F# note', key); // T
+   }
+   else if (key === 71){
+      drawG1 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 391.9954;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed G note', key); // G 
+   }
+   else if (key === 89){
+      drawGsharp1 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 415.3047;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed G# note', key); // Y
+   }
+   else if (key === 72){
+      drawA1 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 440.0000;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed A note', key); // H
+   }
+   else if (key === 85){
+      drawAsharp1 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 466.1638;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed A# note', key); // U
+   }
+   else if (key === 74){
+      drawB1 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 493.8833;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed B note', key); // J
+   }
+   if (key === 75){
+      drawC2 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 523.2511;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed C2 note', key); // K
+   }
+   if (key === 79){
+      drawCsharp2 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 554.3653;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed C#2 note', key); // O
+   }
+   if (key === 76){
+      drawD2 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 587.3295;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed D2 note', key); // L
+   }
+   if (key === 80){
+      drawDsharp2 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 622.2540;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed D#2 note', key); // P
+   }
+   else if (key === 186){
+      drawE2 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 659.2551;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed E2 note', key); // ; key
+   }
+   else if (key === 222){
+      drawF2 = true;
+      audioContext.resume().then(() => {
+         gainNode.gain.value = standardGain;
+         oscillator.frequency.value = 698.4565;
+         oscillator.connect(audioContext.destination);
+      });
+      console.log('pressed F2 note', key); // ' key
+   } 
+}
+
+canvas1.onKeyRelease = key => {
+   keyDown = false;
+   // oscillator.disconnect(audioContext.destination);
+   if (key === 65){
+      drawC1 = false;
+      gainNode.gain.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released C note', key);
+   }
+   else if (key === 87){
+      drawCsharp1 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released C# note', key);
+   }
+   else if (key === 83){
+      drawD1 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released D note', key);
+   }
+   else if (key === 69){
+      drawDsharp1 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released D# note', key);
+   }
+   else if (key === 68){
+      drawE1 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released E note', key);
+   }
+   else if (key === 70){
+      drawF1 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released F note', key);
+   }
+   else if (key === 84){
+      drawFsharp1 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released F# note', key);
+   }
+   else if (key === 71){
+      drawG1 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released G note', key);
+   }
+   else if (key === 89){
+      drawGsharp1 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released G# note', key);
+   }
+   else if (key === 72){
+      drawA1 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released A note', key);
+   }
+   else if (key === 85){
+      drawAsharp1 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released A# note', key);
+   }
+   else if (key === 74){
+      drawB1 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released B note', key);
+   }
+   if (key === 75){
+      drawC2 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released C2 note', key);
+   }
+   if (key === 79){
+      drawCsharp2 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released C#2 note', key);
+   }
+   if (key === 76){
+      drawD2 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released D2 note', key);
+   }
+   if (key === 80){
+      drawDsharp2 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released D#2 note', key);
+   }
+   else if (key === 186){
+      drawE2 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released E2 note', key);
+   }
+   else if (key === 222){
+      drawF2 = false;
+      oscillator.frequency.value = 0;
+      oscillator.disconnect(audioContext.destination);
+      console.log('released F2 note', key);
+   }
+}
+
+////////////////// MAIN ANIMATE-FRAME CALLBACK
+
+let time = 0, now = Date.now(), nowX = 0, nowY = 0, varyX = 0, varyZ = 0;
+
+let fl = 3; // FOCAL LENGTH OF CAMERA
+
+let blinkTime = 0, blinkInterval = 1;
+
+////////////////// SUPPORT FOR ANIMATION SEQUENCING.
+
+let defaultTransitionTime = 1;
+let A = [];
+
+/*********** FIRST VERSION
+let addToA = (time, transitionTime) => {
+   A.push({time: time, transitionTime: transitionTime});
+}
+let evalA = (i, t) => {
+   let time = A[i].time;
+   let transitionTime = A[i].transitionTime;
+   if (transitionTime === undefined)
+      transitionTime = defaultTransitionTime;
+   if (t < time) return 0;
+   if (t > time + transitionTime) return 1;
+   return sCurve((t - time) / transitionTime);
+}
+***********/
+
+let addToA = (t0, t1, tt0, tt1) => {
+   if (t1 === undefined)
+      t1 = 10000000;
+   if (tt0 === undefined)
+      tt0 = 1;
+   if (tt1 === undefined)
+      tt1 = tt0;
+
+   A.push({t0 : t0,
+           t1 : t1,
+           tt0: tt0,
+           tt1: tt1
+   });
+}
+
+let evalA = (i, t) => {
+   let t0  = A[i].t0;
+   let t1  = A[i].t1;
+   let tt0 = A[i].tt0;
+   let tt1 = A[i].tt1;
+
+   if (t < t0 || t > t1 + tt1)
+      return 0;
+   if (t > t0 + tt0 && t < t1)
+      return 1;
+   if (t > t0 && t < t0 + tt0)
+      return sCurve((t - t0) / tt0);
+   return 1 - sCurve((t - t1) / tt1);
+}
+
+addToA(0);
+
+addToA(0.5, 2., 4.3, 10);
+
+function animate(gl) {
+
+   //let time = (Date.now() - startTime) / 1000;
+
+
+   // WHENEVER MOUSE IS PRESSED, STOP TIME AND DRAG FIGURE POSITION.
+
+   if (! isDown)
+      time += (Date.now() - now) / 1000;
+   else {
+      varyX += mouseX - nowX;
+      varyZ -= mouseY - nowY;
+   }
+
+   now  = Date.now();
+   nowX = mouseX;
+   nowY = mouseY;
+   
+  
+
+   setUniform('1f', 'uTime', time);
+
+
+   // EACH LIGHT DIRECTION VECTOR MUST BE UNIT LENGTH.
+
+   let L0 = normalize([1,1,1]);
+   let L1 = normalize([-1,-1,-1]);
+
+   setUniform('3fv', 'uLDir', L0.concat(L1));
+
+   setUniform('3fv', 'uLCol', [ .6,.8,1,      .5,.4,.3 ] );
+
+   // USED red,grn,blu SLIDER VALUES TO CONTROL OBJECT COLOR.
+
+   setColor([1,1,1]);
+
+   // ANIMATE RAY TRACED OBJECTS IN THE FRAGMENT SHADER.
+
+   let x = .7 * Math.cos(time);
+   let z = .7 * Math.sin(time);
+   setUniform('4fv', 'uSph', [ 0,0,0,.4,
+                               x,0,z,.2 ] );
+
+
+// ADD PERSPECTIVE TO THE VIEW
+
+//  Perspective matrix to transform ( px, py, pz ):
+//
+//  x        1 0 0 0   px
+//  y  /---  0 1 0 0   py
+//  z  \---  0 0 1 0   pz
+//  w        X Y Z 1   1
+//
+//  Resulting point in space is: ( x/w, y/w, z/w )
+
+   //Create variables to modify camera angles
+   let spinX = 0;
+   let spinY = 0;
+   let warpX1 = 1;
+   let warpY1 = 0;
+   let warpX2 = 0;
+   let warpY2 = 1;
+
+   setUniform('Matrix4fv', 'uCamera', false, [
+      warpX1,warpY1,0,0, warpX2,warpY2,0,0, spinX,spinY,-1,-1/fl, 0,0,0,1
+   ]);
+
+   //////// SET SPLINES ///////
+
+   let t = (time / 4) % 1;
+
+   let X = evalCatmullRomSpline(t, [-1,.5,0,-.5,-1]);
+   let Y = evalCatmullRomSpline(t, [0,.5,-.5,0,.5,-.5,0]);
+   let Z = evalCatmullRomSpline(t, [0,-1,1,0]);
+   let R = evalCatmullRomSpline(t, [0.05,0.05,1,0.05]);
+   let spline1 = evalCatmullRomSpline(t, [0.2, 1, 0, 1, 0.2])
+
+
+
+
+   let rotatexVal = 0.4;
+   let rotateyVal = 0.2;
+
+   let keyOffColor = [1,1,1];
+   let keyOnColor = [1,0,0];
+
+
+   //Store array of all key colors (black/white), to easily change later
+   let keyColors = [
+      [1,1,1], [0,0,0], [1,1,1], [0,0,0], [1,1,1], 
+      [1,1,1], [0,0,0], [1,1,1], [0,0,0], [1,1,1], [0,0,0], [1,1,1],
+      [1,1,1], [0,0,0], [1,1,1], [0,0,0], [1,1,1],
+      [1,1,1]
+   ];
+
+   //DEFINE PIANO BACK
+   let pianoBack = [[0,0.05,-0.2], [0.8,0.3,0.2]];
+
+   //DEFINE PIANO BOTTOM
+   let pianoBottom = [[0,0,0], [0.8,0.03,0.5]]
+
+   //DEFINE LEGS WITH POSITION AND DIMENSIONS
+   let leg1 = [[0.7,-0.3,0.4], [0.05,0.3,0.05]];
+   let leg2 = [[-0.7,-0.3,0.4], [0.05,0.3,0.05]];
+   let leg3 = [[-0.7,-0.3,-0.4],[0.05,0.3,0.05]];
+   let leg4 = [[0.7,-0.3,-0.4],[0.05,0.3,0.05]];
+ 
+   //DEFINE POSITION AND DIMENION OF ALL KEYS
+   let keys = [
+      [-0.7,0.05,0.3],[0.05, 0.02, 0.18],       //C 0 1
+      [-0.65,0.0559,0.2], [0.05, 0.02, 0.18],   //C# 2 3
+      [-0.59,0.05,0.3], [0.05, 0.02, 0.18],     //D 4 5
+      [-0.53,0.0559,0.2],[0.05, 0.02, 0.18],    //D# 6 7
+      [-0.48,0.05,0.3], [0.05, 0.02, 0.18],     //E 8 9
+      [-0.37,0.05,0.3], [0.05, 0.02, 0.18],     //F 10 11
+      [-0.32,0.0559,0.2], [0.05, 0.02, 0.18],   //F# 12 13
+      [-0.26,0.05,0.3], [0.05, 0.02, 0.18],     //G 14 15
+      [-0.205,0.0559,0.2], [0.05, 0.02, 0.18],  //G# 16 17
+      [-0.15,0.05,0.3], [0.05, 0.02, 0.18],     //A 18 19
+      [-0.09,0.0559,0.2], [0.05, 0.02, 0.18],   //A# 20 21
+      [-0.04,0.05,0.3], [0.05, 0.02, 0.18],     //B 22 23
+      [0.07,0.05,0.3], [0.05, 0.02, 0.18],      //C2 24 25
+      [0.12,0.0559,0.2], [0.05, 0.02, 0.18],    //C#2 26 27
+      [0.18,0.05,0.3], [0.05, 0.02, 0.18],      //D2 28 29
+      [0.24,0.0559,0.2], [0.05, 0.02, 0.18],    //D#2 30 31
+      [0.29,0.05,0.3], [0.05, 0.02, 0.18],      //E2 32 33
+      [0.40,0.05,0.3], [0.05, 0.02, 0.18],      //F2 34 35
+      [0.45,0.0559,0.2], [0.05, 0.02, 0.18],    //F#2 36 37
+      [0.51,0.05,0.3], [0.05, 0.02, 0.18],      //G2 38 39
+      [0.565,0.0559,0.2], [0.05, 0.02, 0.18],   //G#2 40 41
+      [0.62,0.05,0.3], [0.05, 0.02, 0.18],      //A2 42 43
+      [0.68,0.0559,0.2], [0.05, 0.02, 0.18],    //A#2 44 45
+      [0.73,0.05,0.3], [0.05, 0.02, 0.18]       //B2 46 47
+   ]
+
+   let notBlinking = time - blinkTime > .1;
+         if (time > blinkTime + blinkInterval) {
+            blinkTime = time;
+            blinkInterval = .2 + 1.3 * Math.random();
+         }
+
+   let eyes = [
+      [-0.6, 0.4, -0.15], [0.3,0.3,0.3],
+      [0.6, 0.4, -0.15], [0.3,0.3,0.3]
+   ]
+
+   let pupils = [
+      [-0.6, 0.4, 0], [0.2, notBlinking * 0.2, 0.2],
+      [0.6, 0.4, 0], [0.2, notBlinking * 0.2, 0.2]
+   ]
+
+   let nose = [
+      [0, 0.25, 0.1], [0.1, 0.1, 0.1]
+   ]
+
+   ////////////////// DRAW THE SCENE ///////////////////
+
+   // mSave();
+   //    mRotateX(rotatexVal);
+   //    mRotateY(rotateyVal);
+   //    mTranslate(0,-1,0);
+   //    mScale(8,0,4);
+   //    drawMesh(cubeMesh, [Math.sin(time),0.3,0.9]);
+   // mRestore();
+
+
+  
+   if (keyDown === true) {
+         keys[10][1] = 0.06;
+         keys[12][1] = 0.065;
+         keys[14][1] = 0.07;
+         keys[16][1] = 0.077;
+         keys[18][1] = 0.08;
+         keys[20][1] = 0.085;
+         keys[22][1] = 0.105;
+         keys[24][1] = 0.105;
+         keys[26][1] = 0.08;
+         keys[28][1] = 0.077;
+         keys[30][1] = 0.07;
+         keys[32][1] = 0.065;
+         keys[34][1] = 0.06;
+         pianoBottom[0][1] -= 0.1;
+   }
+   ////////////// DRAW SHAPES/ANIMATIONS BASED ON WHAT KEY IS PRESSED //////////////////
+   if (drawC1 == true) {
+      keyColors[0] = keyOnColor;
+      mSave();
+
+      mRestore();
+
+   }
+   if (drawCsharp1 == true) {
+      keyColors[1] = keyOnColor;
+      mSave();
+         spinX = Math.sin(time);
+         keys[3][1] = 0.01 + Math.sin(time) / 5;
+         keys[27][1] = 0.01 + Math.sin(time) / 5;
+         
+      mRestore();
+   }
+   if (drawD1 == true) {
+      keyColors[2] = keyOnColor;
+      mSave();
+         pianoBack[1][0] = 1.1;
+      mRestore();
+   }
+   if (drawDsharp1 == true) {
+      keyColors[3] = keyOnColor;
+      mSave();
+         eyes[0][1] = Math.tan(time);
+         eyes[2][1] = Math.tan(time);
+         pupils[0][1] = Math.tan(time);
+         pupils[2][1] = Math.tan(time);
+      mRestore();
+   }
+   if (drawE1 == true) {
+      keyColors[4] = keyOnColor;
+      mSave();
+         nose[0][2] = Math.tan(time);
+      mRestore();
+   }
+   if (drawF1 == true) {
+      keyColors[5] = keyOnColor;
+      mSave();
+         pianoBack[1][0] = Math.cos(time);
+         pianoBack[1][1] = Math.cos(time);
+         pianoBottom[1][0] = Math.cos(time);
+         pianoBack[1][1] = Math.cos(time);
+         eyes[1][1] = Math.cos(time);
+         eyes[3][1] = Math.cos(time);
+         pupils[1][1] = Math.cos(time);
+         pupils[3][1] = Math.cos(time);
+         nose[1][0] = Math.cos(time) / 3;
+         nose[1][1] = Math.cos(time) / 3;
+      mRestore();
+   }
+   if (drawFsharp1 == true) {
+      keyColors[6] = keyOnColor;
+      mSave();
+         keys[12][1] = 0.01 + Math.sin(time) / 2;
+         keys[13][1] = 0.01 + Math.sin(time) / 2;
+         keys[36][1] = 0.01 + Math.sin(time) / 2;
+         keys[37][1] = 0.01 + Math.sin(time) / 2;
+      mRestore();
+   }
+   if (drawG1 == true) {
+      keyColors[7] = keyOnColor;
+      for (let i = 0; i < 10; i++){
+         mSave();
+            mRotateX(rotatexVal);
+            mRotateY(rotateyVal);
+            mTranslate(-R + i,-Y - i,-10);
+            mScale(0.8);
+            drawMesh(cubeMesh, [Math.sin(time * 10), 0.2, 0.7]);
+         mRestore();
+      }
+      for (let i = 0; i < 10; i++){
+         mSave();
+            mRotateX(rotatexVal);
+            mRotateY(rotateyVal);
+            mRotateX(0.1);
+            mTranslate(-((-R*2) + i), -((-X + 1) - i), -6);
+            mScale(0.8);
+            drawMesh(sphereMesh, [Math.sin(time * 10), Math.tan(time), 0.7]);
+         mRestore();
+      }
+   }
+   if (drawGsharp1 == true) {
+      keyColors[8] = keyOnColor;
+      mSave();
+         keys[16][1] = 0.01 + Math.sin(time) / 2;
+         keys[17][1] = 0.01 + Math.tan(time) / 2;
+         keys[40][2] = 0.01 + Math.sin(time) / 2;
+         keys[41][2] = 0.01 + Math.tan(time) / 2;
+      mRestore();
+   }
+   if (drawA1 == true) {
+      keyColors[9] = keyOnColor;
+      mSave();
+         mRotateX(rotatexVal);
+         mRotateY(rotateyVal);
+         mTranslate(-R + 2,-Y,-10);
+         mScale(0.8);
+         drawMesh(sphereMesh, [Math.sin(time * 10), 0.2, 0.7]);
+      mRestore();
+      mSave();
+         mRotateX(rotatexVal);
+         mRotateY(rotateyVal);
+         mTranslate(X,R,-2);
+         mScale(0.8);
+         drawMesh(latheMesh, [0.2, Math.tan(time * 10), 0.7]);
+      mRestore();
+      mSave();
+         mRotateX(rotatexVal);
+         mRotateY(rotateyVal);
+         mTranslate(3,0,Math.sin(time))
+         mTranslate(-spline1,spline1,-2);
+         mScale(1.1);
+         drawMesh(latheMesh, [0.9, Math.tan(time * 2), 0.7]);
+      mRestore();
+   }
+   if (drawAsharp1 == true) {
+      keyColors[10] = keyOnColor;
+      mSave();
+         keys[20][1] = 0.01 + Math.sin(time ) / 2;
+         keys[21][0] = 0.01 + Math.tan(time) / 2;
+         keys[44][2] = 0.01 + Math.sin(time) / 2;
+         keys[45][1] = 0.01 + Math.tan(time) / 2;
+      mRestore();
+   }
+   if (drawB1 == true) {
+      keyColors[11] = keyOnColor;
+      spinX = Math.sin(time);
+      setUniform('Matrix4fv', 'uCamera', false, [
+            warpX1,warpY1,0,0, warpX2,warpY2,0,0, spinX,spinY,-1,-1/fl, 0,0,0,1
+      ]);
+      
+   }
+   if (drawC2 == true) {
+      keyColors[12] = keyOnColor;
+      spinX = Math.sin(time);
+      spinY = Math.tan(time);
+      setUniform('Matrix4fv', 'uCamera', false, [
+            warpX1,warpY1,0,0, warpX2,warpY2,0,0, spinX,spinY,-1,-1/fl, 0,0,0,1
+      ]);
+   }
+   if (drawCsharp2 == true) {
+      keyColors[13] = keyOnColor;
+      spinX = Math.sin(time);
+      warpX1 = Math.sin(time * 10);
+      setUniform('Matrix4fv', 'uCamera', false, [
+            warpX1,warpY1,0,0, warpX2,warpY2,0,0, spinX,spinY,-1,-1/fl, 0,0,0,1
+      ]);
+   }
+   if (drawD2 == true) {
+      keyColors[14] = keyOnColor;
+      spinY = Math.sin(time);
+      warpY1 = Math.sin(time * 10);
+      warpY2 = Math.sin(time * 3)
+      setUniform('Matrix4fv', 'uCamera', false, [
+            warpX1,warpY1,0,0, warpX2,warpY2,0,0, spinX,spinY,-1,-1/fl, 0,0,0,1
+      ]);
+   }
+   if (drawDsharp2 == true) {
+      keyColors[15] = keyOnColor;
+      spinX = Math.sin(time/2);
+      warpY1 = Math.sin(time/3);
+      warpY2 = Math.sin(time/3)
+      setUniform('Matrix4fv', 'uCamera', false, [
+            warpX1,warpY1,0,0, warpX2,warpY2,0,0, spinX,spinY,-1,-1/fl, 0,0,0,1
+      ]);
+      let var1 = 0.2;
+      mSave();
+         for (let i = 1; i<10; i++) {
+            mTranslate(-var1, i, -10);
+            mTranslate(Math.sin(time), 0, 0);
+            mScale(var1);
+            drawMesh(sphereMesh, [Math.sin(time), 0.2, 0.5])
+            var1 *= 2;
+         }
+      mRestore();
+   }
+   if (drawE2 == true) {
+      keyColors[16] = keyOnColor;
+      mSave();
+         
+      mRestore();
+   }
+   if (drawF2 == true) {
+      keyColors[17] = keyOnColor;
+      mSave();
+         
+      mRestore();
+   }
+
+   //////////// DRAW EYES ///////////////
+   
+
+   mSave();
+      mRotateY(mouseX * 0.1);
+      mRotateX(mouseY * 0.1);
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(eyes[0]);
+      mScale(eyes[1]);
+      drawMesh(sphereMesh, [1,1,1]);
+   mRestore();
+   mSave();
+         mRotateY(mouseX * 0.1);
+         mRotateX(mouseY * 0.1);
+         mRotateX(rotatexVal);
+         mRotateY(rotateyVal);
+         mTranslate(pupils[0])
+         mScale(pupils[1]);
+         drawMesh(sphereMesh, [0,0,0])
+   mRestore();
+
+   mSave();
+      mRotateY(-mouseX * 0.1);
+      mRotateX(-mouseY * 0.1);
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(eyes[2])
+      mScale(eyes[3]);
+      drawMesh(sphereMesh, [1,1,1]);
+   mRestore();
+   mSave();
+         mRotateY(-mouseX * 0.1);
+         mRotateX(-mouseY * 0.1);
+         mRotateX(rotatexVal);
+         mRotateY(rotateyVal);
+         mTranslate(pupils[2])
+         mScale(pupils[3]);
+         drawMesh(sphereMesh, [0,0,0])
+   mRestore();
+
+
+   //////////////// DRAW THE NOSE ////////////
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(nose[0]);
+      mScale(nose[1]);
+      drawMesh(cylinderMesh, [1,0.6,1]);
+   mRestore();
+   ///////////////// DRAW THE PIANO /////////////
+
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(pianoBottom[0]);
+      mScale(pianoBottom[1]);
+      drawMesh(cubeMesh, [1,1,1]);
+   mRestore();
+   
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(pianoBack[0]);
+      mScale(pianoBack[1]);
+      drawMesh(cubeMesh, [1,1,1]);
+   mRestore();
+
+   ////////// PIANO LEGS //////////
+
+
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mRotateX(Math.sin(time * 5)/10);
+      mTranslate(leg1[0]);
+      mScale(leg1[1]);
+      drawMesh(cubeMesh, [1,1,1]);
+   mRestore();
+
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mRotateX(-Math.sin(time * 5)/10);
+      mTranslate(leg2[0]);
+      mScale(leg2[1]);
+      drawMesh(cubeMesh, [1,1,1]);
+   mRestore();
+
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mRotateX(Math.sin(time * 5)/10);
+      mTranslate(leg3[0]);
+      mScale(leg3[1]);
+      drawMesh(cubeMesh, [1,1,1]);
+   mRestore();
+
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mRotateX(-Math.sin(time * 5)/10);
+      mTranslate(leg4[0]);
+      mScale(leg4[1]);
+      drawMesh(cubeMesh, [1,1,1]);
+   mRestore();
+
+
+   ////////// PIANO KEYS /////////
+   
+   // C //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[0]);
+      mScale(keys[1]);
+      drawMesh(cubeMesh, keyColors[0])
+   mRestore();
+
+   // C# //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[2]);
+      mScale(keys[3]);
+      drawMesh(cubeMesh, keyColors[1])
+   mRestore();
+
+   // D //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[4]);
+      mScale(keys[5]);
+      drawMesh(cubeMesh, keyColors[2])
+   mRestore();
+   // D# //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[6]);
+      mScale(keys[7]);
+      drawMesh(cubeMesh, keyColors[3])
+   mRestore();
+
+   // E //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[8]);
+      mScale(keys[9]);
+      drawMesh(cubeMesh, keyColors[4])
+   mRestore();
+   // F //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[10]);
+      mScale(keys[11]);
+      drawMesh(cubeMesh, keyColors[5])
+   mRestore();
+    // F# //
+    mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[12]);
+      mScale(keys[13]);
+      drawMesh(cubeMesh, keyColors[6])
+   mRestore();
+
+   // G //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[14]);
+      mScale(keys[15]);
+      drawMesh(cubeMesh, keyColors[7])
+   mRestore();
+   // G# //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[16]);
+      mScale(keys[17]);
+      drawMesh(cubeMesh, keyColors[8])
+   mRestore();
+
+   // A //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[18]);
+      mScale(keys[19]);
+      drawMesh(cubeMesh, keyColors[9])
+   mRestore();
+   // A# //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[20]);
+      mScale(keys[21]);
+      drawMesh(cubeMesh, keyColors[10])
+   mRestore();
+
+   // B //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[22]);
+      mScale(keys[23]);
+      drawMesh(cubeMesh, keyColors[11])
+   mRestore();
+
+   // C2 //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[24]);
+      mScale(keys[25]);
+      drawMesh(cubeMesh, keyColors[12])
+   mRestore();
+   // C#2 //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[26]);
+      mScale(keys[27]);
+      drawMesh(cubeMesh, keyColors[13])
+   mRestore();
+
+   // D2 //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[28]);
+      mScale(keys[29]);
+      drawMesh(cubeMesh, keyColors[14])
+   mRestore();
+   // D#2 //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[30]);
+      mScale(keys[31]);
+      drawMesh(cubeMesh, keyColors[15])
+   mRestore();
+
+   // E2 //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[32]);
+      mScale(keys[33]);
+      drawMesh(cubeMesh, keyColors[16])
+   mRestore();
+   // F2 //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[34]);
+      mScale(keys[35]);
+      drawMesh(cubeMesh, keyColors[17])
+   mRestore();
+    
+   
+   
+   /////NO SOUND FOR THESE KEYS//////
+   
+   // F#2 //
+    mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[36]);
+      mScale(keys[37]);
+      drawMesh(cubeMesh, [0,0,0])
+   mRestore();
+
+   // G2 //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[38]);
+      mScale(keys[39]);
+      drawMesh(cubeMesh, keyOffColor)
+   mRestore();
+   // G#2 //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[40]);
+      mScale(keys[41]);
+      drawMesh(cubeMesh, [0,0,0])
+   mRestore();
+
+   // A2 //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[42]);
+      mScale(keys[43]);
+      drawMesh(cubeMesh, keyOffColor)
+   mRestore();
+   // A#2 //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[44]);
+      mScale(keys[45]);
+      drawMesh(cubeMesh, [0,0,0])
+   mRestore();
+
+   // B2 //
+   mSave();
+      mRotateX(rotatexVal);
+      mRotateY(rotateyVal);
+      mTranslate(keys[46]);
+      mScale(keys[47]);
+      drawMesh(cubeMesh, keyOffColor)
+   mRestore();
+
+
+
+   ///////////// ANIMATION WHEN MOUSE CLICKED DOWN ////////////////
+
+
+
+/////////////////////////// CURSOR DRAWING////////////////////
+
+   // DRAW THE CURSOR (LOCATION OF WRIST).
+
+   // mSave();
+   //    mRotateX(0.4);
+   //    mRotateY(0.2);
+   //    mTranslate(mouseX, mouseY, 0.2)
+   //    mScale(.05, .05, .0001);
+   //    drawMesh(cubeMesh, [1,0,0]);
+   // mRestore();
+
+}
+
+
+function hitTesting() {
+   let ray = {
+      V: [0,0,fl],
+      W: normalize([mouseX, mouseY, -fl])
+   };
+
+   let transformRay = (ray, M) => {
+      return {
+         V:           matrixTransform(M, ray.V.concat([1])).slice(0,3),
+         W: normalize(matrixTransform(M, ray.W.concat([0])).slice(0,3))
+      };
+   }
+
+   // YOU CAN IMPLEMENT DIFFERENT SHAPES HERE
+
+   let rayTraceToUnitSphere = ray => {
+      let B = dot(ray.V, ray.W);
+      let C = dot(ray.V, ray.V) - 1;
+      return B * B > C ? -B - Math.sqrt(B * B - C) : -1;
+   }
+
+
+
+   let rayTraceToUnitCube = ray => {
+      // Same math as the caps but 3 times for "slabs" In cube
+      let x1 = (-1 - ray.V[0]) / ray.W[0]; 
+      let x2  = ( 1 - ray.V[0]) / ray.W[0]; 
+      let xEnter = Math.min(x1, x2);
+      let xExit = Math.max(x1, x2);
+       
+      let y1 = (-1 - ray.V[1]) / ray.W[1]; 
+      let y2  = ( 1 - ray.V[1]) / ray.W[1]; 
+      let yEnter = Math.min(y1, y2);
+      let yExit = Math.max(y1, y2);
+       
+      let z1 = (-1 - ray.V[2]) / ray.W[2]; 
+      let z2  = ( 1 - ray.V[2]) / ray.W[2];
+      let zEnter = Math.min(z1, z2);
+      let zExit = Math.max(z1, z2);
+      
+      // Get maxes and mins of entrances and exits respectively
+      let maxEnter = Math.max(xEnter, Math.max(yEnter, zEnter));
+      let minExit  = Math.min(xExit,  Math.min(yExit, zExit));
+       
+      return maxEnter < minExit ? maxEnter : -1;
+   }
+   
+
+   hitIndex = -1;
+   let T = 1000000, t = -1;
+   for (let i = 0 ; i < drawArray.length ; i++) {
+      let mesh   = drawArray[i].mesh,
+          matrix = drawArray[i].matrix,
+          rgb    = drawArray[i].rgb;
+
+      let objectRay = transformRay(ray, matrixInverse(matrix));
+
+      switch (mesh) {
+         case (cubeMesh): t = rayTraceToUnitCube  (objectRay); 
+      break;
+         default        : t = rayTraceToUnitSphere(objectRay); 
+      break;
+      }
+
+      if (t >= 0 && t < T) {
+         T = t;
+	 hitIndex = i;
+      }
+   }
+}
+
+let catmullRomMatrix = [ -.5,1,-.5,0, 1.5,-2.5,0,1, -1.5,2,.5,0, .5,-.5,0,0 ];
+
+let evalCatmullRomSpline = (t, K) => {
+   t = Math.max(0, Math.min(t, .9999));
+   let n = K.length - 1;
+   let i = Math.floor(n * t);
+   let f = (n * t) % 1.0;
+
+   let A = K[Math.max(0, i-1)];
+       B = K[i];
+       C = K[i+1];
+       D = K[Math.min(n, i+2)];
+
+   let c = matrixTransform(catmullRomMatrix, [A,B,C,D]);
+
+   return c[0] * f*f*f + c[1] * f*f + c[2] * f + c[3];
+}
+
+let latheMesh = createMesh(32, 32, uvToLathe,
+[
+   [-1,-.7,0,.7,1], // VARY Z AS A FUNCTION OF V
+   [0,.5,.1,.2,0]   // VARY R AS A FUNCTION OF V
+]);
+
+
+/////////////////////////////////////////////////
+//
+
+
+
+/////////////////////////////////////////////////
+
+
+// START EVERYTHING.
+
+gl_start(canvas1, vs, fs);
+</script>
+
